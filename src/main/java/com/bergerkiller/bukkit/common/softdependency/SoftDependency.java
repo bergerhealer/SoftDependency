@@ -10,6 +10,7 @@ import org.bukkit.plugin.Plugin;
 
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 
 /**
@@ -21,7 +22,9 @@ import java.util.logging.Level;
  * <br>
  * This class can be safely created in Plugin constructors and will automatically
  * update itself after the plugin enables. It can be enabled while handling
- * <i>onEnable</i> by having the plugin call {@link #detect()} early.<br>
+ * <i>onEnable</i> by having the plugin call {@link #detect()} early. There is also
+ * a {@link #detectAll(Object)} to automatically call this on all SoftDependency
+ * fields declared in a Class.<br>
  * <br>
  * This Dependency is also disabled when the owning plugin is about to disable,
  * ensuring that no logic involved with the dependency is left behind.<br>
@@ -56,7 +59,7 @@ import java.util.logging.Level;
  *
  * @param <T> Dependency API interface
  * @author Irmo van den Berge
- * @version 1.0
+ * @version 1.01
  */
 public abstract class SoftDependency<T> {
     /** The plugin that owns this Dependency and is informed of its status changes */
@@ -71,10 +74,35 @@ public abstract class SoftDependency<T> {
     private boolean detecting = false;
     private boolean enabled = true;
 
+    /**
+     * Builds a new SoftDependency using callback methods
+     *
+     * @param owningPlugin The plugin that owns this Dependency and is informed of its status changes
+     * @param dependencyName The plugin name of this Dependency
+     * @return Builder
+     * @param <T> Dependency API interface
+     */
+    public static <T> Builder<T> build(Plugin owningPlugin, String dependencyName) {
+        return new Builder<>(owningPlugin, dependencyName);
+    }
+
+    /**
+     * Constructs a new SoftDependency
+     *
+     * @param owningPlugin The plugin that owns this Dependency and is informed of its status changes
+     * @param dependencyName The plugin name of this Dependency
+     */
     public SoftDependency(Plugin owningPlugin, String dependencyName) {
         this(owningPlugin, dependencyName, null);
     }
 
+    /**
+     * Constructs a new SoftDependency
+     *
+     * @param owningPlugin The plugin that owns this Dependency and is informed of its status changes
+     * @param dependencyName The plugin name of this Dependency
+     * @param defaultValue The default value {@link #get()} returns when this Dependency is disabled
+     */
     public SoftDependency(Plugin owningPlugin, String dependencyName, T defaultValue) {
         this.owningPlugin = owningPlugin;
         this.dependencyName = dependencyName;
@@ -117,6 +145,42 @@ public abstract class SoftDependency<T> {
                 detect();
             } else if (currentPlugin != null) {
                 handleDisable(currentPlugin);
+            }
+        }
+    }
+
+    /**
+     * Looks up all the static fields in a Class and/or local member fields declared in
+     * an Object value and if they are SoftDependency fields, calls {@link #detect()} on
+     * them. Can be used to perform detection of all soft dependencies at an earlier
+     * point in time during plugin enabling.
+     *
+     * @param fieldContainer Object or Class containing fields
+     * @see #detect()
+     */
+    public static void detectAll(Object fieldContainer) {
+        java.lang.reflect.Field[] fields = (fieldContainer instanceof Class)
+                ? ((Class<?>) fieldContainer).getDeclaredFields()
+                : fieldContainer.getClass().getDeclaredFields();
+        for (java.lang.reflect.Field field : fields) {
+            if (!SoftDependency.class.isAssignableFrom(field.getType())) {
+                continue;
+            }
+            try {
+                field.setAccessible(true);
+                SoftDependency<?> dep;
+                if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                    dep = (SoftDependency<?>) field.get(null);
+                } else if (fieldContainer instanceof Class) {
+                    continue; // Doesn't work.
+                } else {
+                    dep = (SoftDependency<?>) field.get(fieldContainer);
+                }
+                if (dep != null) {
+                    dep.detect();
+                }
+            } catch (Throwable t) {
+                throw new UnsupportedOperationException("Can't detect soft dependency", t);
             }
         }
     }
@@ -169,6 +233,26 @@ public abstract class SoftDependency<T> {
         if (plugin != null && plugin.isEnabled()) {
             handleEnable(plugin);
         }
+    }
+
+    /**
+     * The plugin that owns this Dependency and is informed of its status changes
+     *
+     * @return owning plugin
+     */
+    public Plugin owner() {
+        return owningPlugin;
+    }
+
+    /**
+     * Gets the plugin name of this Dependency. The same name that was specified
+     * when creating this SoftDependency. In the case of plugin Provides, the
+     * input name to this dependency is returned, not the actual name of the plugin.
+     *
+     * @return dependency name
+     */
+    public String name() {
+        return dependencyName;
     }
 
     /**
@@ -267,6 +351,228 @@ public abstract class SoftDependency<T> {
             e.run(); // Avoid synchronized()
         } else {
             AfterPluginEnableHook.INSTANCE.schedule(e);
+        }
+    }
+
+    /**
+     * Builds a soft dependency implementation using callbacks provided through
+     * this Builder
+     *
+     * @param <T> Dependency API interface
+     */
+    public static class Builder<T> {
+        @SuppressWarnings("rawtypes")
+        private static final Consumer NOOP_CALLBACK = s -> {};
+        @SuppressWarnings("unchecked")
+        private static <T> Consumer<SoftDependency<T>> noop_callback() {
+            return NOOP_CALLBACK;
+        }
+
+        private static <T> Consumer<T> chainConsumer(final Consumer<T> prev, final Consumer<T> next) {
+            if (next == null) {
+                return NOOP_CALLBACK;
+            } else if (prev == NOOP_CALLBACK) {
+                return next;
+            } else {
+                return input -> { prev.accept(input); next.accept(input); };
+            }
+        }
+
+        private final Plugin owningPlugin;
+        private final String dependencyName;
+        private T defaultValue = null;
+        private Initializer<T> initializer;
+        private Consumer<SoftDependency<T>> whenEnable;
+        private Consumer<SoftDependency<T>> whenDisable;
+
+        private Builder(Plugin owningPlugin, String dependencyName) {
+            this.owningPlugin = owningPlugin;
+            this.dependencyName = dependencyName;
+            this.initializer = null;
+            this.whenEnable = noop_callback();
+            this.whenDisable = noop_callback();
+        }
+
+        /**
+         * Sets the default API interface value to return when this dependency is disabled.
+         * Is permitted to change the API interface type of this Builder for easier
+         * use.
+         *
+         * @param defaultValue Default API interface value
+         * @return this builder
+         * @param <T2> Same or new API interface type
+         */
+        public <T2> Builder<T2> withDefaultValue(T2 defaultValue) {
+            return update(b -> b.defaultValue = defaultValue);
+        }
+
+        /**
+         * Sets the initializer called when this dependency enables. Should return the
+         * API interface value that can be used to use this dependency.
+         *
+         * @param initializer Initializer
+         * @return this builder
+         * @param <T2> Same or new API interface type
+         */
+        public <T2> Builder<T2> withInitializer(Initializer<T2> initializer) {
+            return update(b -> b.initializer = initializer);
+        }
+
+        /**
+         * Sets the initializer called when this dependency enables. Should return the
+         * API interface value that can be used to use this dependency.
+         *
+         * @param initializer Initializer
+         * @return this builder
+         * @param <T2> Same or new API interface type
+         */
+        public <T2> Builder<T2> withInitializer(InitializerOnlyPlugin<T2> initializer) {
+            return withInitializer((initializer == null) ? null : (s, p) -> initializer.initialize(p));
+        }
+
+        /**
+         * Sets a callback to be called when this dependency enables. Can be multiple callbacks,
+         * which will then be chained.
+         *
+         * @param callback Callback
+         * @return this builder
+         */
+        public Builder<T> whenEnable(final Consumer<SoftDependency<T>> callback) {
+            this.whenEnable = chainConsumer(this.whenEnable, callback);
+            return this;
+        }
+
+        /**
+         * Sets a callback to be called when this dependency enables. Can be multiple callbacks,
+         * which will then be chained.
+         *
+         * @param callback Callback
+         * @return this builder
+         */
+        public Builder<T> whenEnable(Runnable callback) {
+            return whenEnable(s -> callback.run());
+        }
+
+        /**
+         * Sets a callback to be called when this dependency disables. Can be multiple callbacks,
+         * which will then be chained.
+         *
+         * @param callback Callback
+         * @return this builder
+         */
+        public Builder<T> whenDisable(final Consumer<SoftDependency<T>> callback) {
+            this.whenDisable = chainConsumer(this.whenDisable, callback);
+            return this;
+        }
+
+        /**
+         * Sets a callback to be called when this dependency disables. Can be multiple callbacks,
+         * which will then be chained.
+         *
+         * @param callback Callback
+         * @return this builder
+         */
+        public Builder<T> whenDisable(Runnable callback) {
+            return whenDisable(s -> callback.run());
+        }
+
+        /**
+         * Creates the SoftDependency using the previously configured callbacks
+         *
+         * @return SoftDependency
+         * @param <T2> Same or new API interface type. Please avoid incorrect typing.
+         */
+        public <T2> SoftDependency<T2> create() {
+            return new CallbackBasedSoftDependency<>(update(b -> {}));
+        }
+
+        // Total hack but does the job. Java generics sucks, man!
+        @SuppressWarnings("unchecked")
+        private <T2> Builder<T2> update(Consumer<Builder<T2>> updator) {
+            Builder<T2> newBuilder = (Builder<T2>) this;
+            updator.accept(newBuilder);
+            return newBuilder;
+        }
+    }
+
+    /**
+     * Initializes a Soft Dependency after the dependency enables
+     *
+     * @param <T> Dependency API interface
+     */
+    @FunctionalInterface
+    public interface Initializer<T> {
+        /**
+         * Called after a Plugin matching this dependency enables, or after the owning
+         * plugin enables and the dependency is already enabled.<br>
+         * <br>
+         * Should be implemented to analyze the dependency and construct a suitable
+         * dependency API implementation. Is permitted to throw exceptions if this fails,
+         * in which case the dependency isn't further enabled.<br>
+         * <br>
+         * It's allowed to return {@link #defaultValue} if, for example, use of this
+         * dependency was disabled in plugin configuration.
+         *
+         * @param softDependency The owning SoftDependency, contains extra information
+         * @param plugin The plugin that matches the dependency name
+         * @return Dependency interface implementation
+         */
+        T initialize(SoftDependency<T> softDependency, Plugin plugin) throws Error, Exception;
+    }
+
+    /**
+     * Initializes a Soft Dependency after the dependency enables
+     *
+     * @param <T> Dependency API interface
+     */
+    @FunctionalInterface
+    public interface InitializerOnlyPlugin<T> {
+        /**
+         * Called after a Plugin matching this dependency enables, or after the owning
+         * plugin enables and the dependency is already enabled.<br>
+         * <br>
+         * Should be implemented to analyze the dependency and construct a suitable
+         * dependency API implementation. Is permitted to throw exceptions if this fails,
+         * in which case the dependency isn't further enabled.<br>
+         * <br>
+         * It's allowed to return {@link #defaultValue} if, for example, use of this
+         * dependency was disabled in plugin configuration.
+         *
+         * @param plugin The plugin that matches the dependency name
+         * @return Dependency interface implementation
+         */
+        T initialize(Plugin plugin) throws Error, Exception;
+    }
+
+    private static class CallbackBasedSoftDependency<T> extends SoftDependency<T> {
+        private final T defaultValue;
+        private final Initializer<T> initializer;
+        private final Consumer<SoftDependency<T>> whenEnable;
+        private final Consumer<SoftDependency<T>> whenDisable;
+
+        public CallbackBasedSoftDependency(Builder<T> builder) {
+            super(builder.owningPlugin, builder.dependencyName);
+            this.defaultValue = builder.defaultValue;
+            this.initializer = (builder.initializer == null)
+                    ? (s, p) -> CallbackBasedSoftDependency.this.defaultValue
+                    : builder.initializer;
+            this.whenEnable = builder.whenEnable;
+            this.whenDisable = builder.whenDisable;
+        }
+
+        @Override
+        protected T initialize(Plugin plugin) throws Error, Exception {
+            return initializer.initialize(this, plugin);
+        }
+
+        @Override
+        protected void onEnable() {
+            whenEnable.accept(this);
+        }
+
+        @Override
+        protected void onDisable() {
+            whenDisable.accept(this);
         }
     }
 
