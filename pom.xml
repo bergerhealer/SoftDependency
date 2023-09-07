@@ -47,6 +47,42 @@
           <showDeprecation>true</showDeprecation>
         </configuration>
       </plugin>
+
+      <!-- Generate a jar containing the source javadoc -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <version>3.4.1</version>
+        <configuration>
+          <finalName>${project.name}-${project.version}</finalName>
+          <failOnError>false</failOnError>
+          <doclint>none</doclint>
+          <quiet>true</quiet>
+          <source>8</source>
+        </configuration>
+        <executions>
+          <execution>
+            <id>attach-javadocs</id>
+            <goals><goal>jar</goal></goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Generate a jar containing the java sources -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <version>3.2.1</version>
+        <configuration>
+          <finalName>${project.name}-${project.version}</finalName>
+        </configuration>
+        <executions>
+          <execution>
+            <id>attach-sources</id>
+            <goals><goal>jar-no-fork</goal></goals>
+          </execution>
+        </executions>
+      </plugin>
     </plugins>
   </build>
 
