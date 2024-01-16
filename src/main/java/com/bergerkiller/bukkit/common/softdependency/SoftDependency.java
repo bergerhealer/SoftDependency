@@ -11,6 +11,7 @@ import org.bukkit.plugin.Plugin;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.logging.Level;
 
 /**
@@ -59,7 +60,7 @@ import java.util.logging.Level;
  *
  * @param <T> Dependency API interface
  * @author Irmo van den Berge
- * @version 1.02
+ * @version 1.03
  */
 public abstract class SoftDependency<T> implements SoftDetectableDependency {
     /** The plugin that owns this Dependency and is informed of its status changes */
@@ -116,6 +117,19 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
         this.defaultValue = defaultValue;
         this.current = defaultValue;
         whenEnabled(owningPlugin, this::detect);
+    }
+
+    /**
+     * Checks whether a particular enabled plugin matches this dependency. If multiple
+     * plugins exist with the same name, this method can be overridden to detect if it
+     * is the right one. If false is returned, {@link #initialize(Plugin)} will not be
+     * called.
+     *
+     * @param plugin Plugin that enabled
+     * @return True if the plugin matches this dependency. False to ignore it.
+     */
+    protected boolean identify(Plugin plugin) {
+        return true;
     }
 
     /**
@@ -193,7 +207,7 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
                         return;
                     }
                     Plugin plugin = Bukkit.getPluginManager().getPlugin(dependencyName);
-                    if (plugin != null && event.getPlugin() == plugin) {
+                    if (plugin != null && event.getPlugin() == plugin && handleIdentify(plugin)) {
                         handleEnable(plugin);
                     }
                 }
@@ -216,7 +230,7 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
 
         // Detect already enabled
         Plugin plugin = Bukkit.getPluginManager().getPlugin(dependencyName);
-        if (plugin != null && plugin.isEnabled()) {
+        if (plugin != null && plugin.isEnabled() && handleIdentify(plugin)) {
             handleEnable(plugin);
         }
     }
@@ -286,6 +300,16 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
     protected void onDisable() {
     }
 
+    private boolean handleIdentify(Plugin plugin) {
+        try {
+            return this.identify(plugin);
+        } catch (Throwable t) {
+            owningPlugin.getLogger().log(Level.SEVERE, "An error occurred while identifying dependency " + plugin.getName(), t);
+            failDependencyEnable();
+            return false;
+        }
+    }
+
     private void handleEnable(Plugin plugin) {
         if (currentPlugin != null && currentPlugin != plugin) {
             handleDisable(currentPlugin);
@@ -296,6 +320,12 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
             initialized = initialize(plugin);
         } catch (Throwable t) {
             owningPlugin.getLogger().log(Level.SEVERE, "An error occurred while initializing use of dependency " + plugin.getName(), t);
+            failDependencyEnable();
+            return;
+        }
+
+        // If initialized returns the default value (null) assume initialization failed for some reason
+        if (initialized == defaultValue) {
             return;
         }
 
@@ -306,6 +336,7 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
             onEnable();
         } catch (Throwable t) {
             owningPlugin.getLogger().log(Level.SEVERE, "An error occurred while enabling use of dependency " + plugin.getName(), t);
+            failDependencyEnable();
             current = defaultValue;
             currentPlugin = null;
         }
@@ -319,6 +350,10 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
         }
         this.current = defaultValue;
         this.currentPlugin = null;
+    }
+
+    private void failDependencyEnable() {
+        owningPlugin.getLogger().log(Level.SEVERE, "Integrated support is not enabled for this plugin!");
     }
 
     /**
@@ -368,6 +403,7 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
         private final String dependencyName;
         private T defaultValue = null;
         private Initializer<T> initializer;
+        private Predicate<Plugin> identify;
         private Consumer<SoftDependency<T>> whenEnable;
         private Consumer<SoftDependency<T>> whenDisable;
 
@@ -375,6 +411,7 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
             this.owningPlugin = owningPlugin;
             this.dependencyName = dependencyName;
             this.initializer = null;
+            this.identify = p -> true;
             this.whenEnable = noop_callback();
             this.whenDisable = noop_callback();
         }
@@ -390,6 +427,19 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
          */
         public <T2> Builder<T2> withDefaultValue(T2 defaultValue) {
             return update(b -> b.defaultValue = defaultValue);
+        }
+
+        /**
+         * Adds an identification filter. Only plugins matching the predicate result in this
+         * dependency being enabled. By default, there is no filter, and all plugin that
+         * match the dependency name enable the dependency.
+         *
+         * @param identify Plugin identification predicate
+         * @return this builder
+         */
+        public Builder<T> withIdentify(Predicate<Plugin> identify) {
+            this.identify = identify;
+            return this;
         }
 
         /**
@@ -533,17 +583,24 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
     private static class CallbackBasedSoftDependency<T> extends SoftDependency<T> {
         private final T defaultValue;
         private final Initializer<T> initializer;
+        private final Predicate<Plugin> identify;
         private final Consumer<SoftDependency<T>> whenEnable;
         private final Consumer<SoftDependency<T>> whenDisable;
 
         public CallbackBasedSoftDependency(Builder<T> builder) {
             super(builder.owningPlugin, builder.dependencyName);
             this.defaultValue = builder.defaultValue;
+            this.identify = builder.identify;
             this.initializer = (builder.initializer == null)
                     ? (s, p) -> CallbackBasedSoftDependency.this.defaultValue
                     : builder.initializer;
             this.whenEnable = builder.whenEnable;
             this.whenDisable = builder.whenDisable;
+        }
+
+        @Override
+        protected boolean identify(Plugin plugin) {
+            return identify.test(plugin);
         }
 
         @Override
