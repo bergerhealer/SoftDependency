@@ -60,7 +60,7 @@ import java.util.logging.Level;
  *
  * @param <T> Dependency API interface
  * @author Irmo van den Berge
- * @version 1.03
+ * @version 1.04
  */
 public abstract class SoftDependency<T> implements SoftDetectableDependency {
     /** The plugin that owns this Dependency and is informed of its status changes */
@@ -207,7 +207,7 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
                         return;
                     }
                     Plugin plugin = Bukkit.getPluginManager().getPlugin(dependencyName);
-                    if (plugin != null && event.getPlugin() == plugin && handleIdentify(plugin)) {
+                    if (plugin != null && event.getPlugin() == plugin && plugin.isEnabled() && handleIdentify(plugin)) {
                         handleEnable(plugin);
                     }
                 }

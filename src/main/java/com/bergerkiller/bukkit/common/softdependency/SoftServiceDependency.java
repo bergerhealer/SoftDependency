@@ -58,7 +58,7 @@ import java.util.logging.Level;
  *
  * @param <T> Dependency API interface
  * @author Irmo van den Berge
- * @version 1.03
+ * @version 1.04
  */
 public abstract class SoftServiceDependency<T> implements SoftDetectableDependency {
     /** The plugin that owns this Dependency and is informed of its status changes */

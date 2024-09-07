@@ -4,7 +4,7 @@
 
   <groupId>com.bergerkiller.bukkit.softdependency</groupId>
   <artifactId>SoftDependency</artifactId>
-  <version>1.03</version>
+  <version>1.04</version>
   <packaging>jar</packaging>
 
   <name>SoftDependency</name>
