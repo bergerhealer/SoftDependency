@@ -60,7 +60,7 @@ import java.util.logging.Level;
  *
  * @param <T> Dependency API interface
  * @author Irmo van den Berge
- * @version 1.04
+ * @version 1.05
  */
 public abstract class SoftDependency<T> implements SoftDetectableDependency {
     /** The plugin that owns this Dependency and is informed of its status changes */
@@ -438,15 +438,20 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
          * @return this builder
          */
         public Builder<T> withIdentify(Predicate<Plugin> identify) {
+            if (identify == null) {
+                throw new IllegalArgumentException("Identify predicate cannot be null");
+            }
             this.identify = identify;
             return this;
         }
 
         /**
          * Sets the initializer called when this dependency enables. Should return the
-         * API interface value that can be used to use this dependency.
+         * API interface value that can be used to use this dependency. Specify a null
+         * initializer to return the default value (typically null) instead of
+         * making an API interface/class available.
          *
-         * @param initializer Initializer
+         * @param initializer Initializer, null for a no-op initializer
          * @return this builder
          * @param <T2> Same or new API interface type
          */
@@ -456,9 +461,11 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
 
         /**
          * Sets the initializer called when this dependency enables. Should return the
-         * API interface value that can be used to use this dependency.
+         * API interface value that can be used to use this dependency. Specify a null
+         * initializer to return the default value (typically null) instead of
+         * making an API interface/class available.
          *
-         * @param initializer Initializer
+         * @param initializer Initializer, null for a no-op initializer
          * @return this builder
          * @param <T2> Same or new API interface type
          */
@@ -474,6 +481,9 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
          * @return this builder
          */
         public Builder<T> whenEnable(final Consumer<SoftDependency<T>> callback) {
+            if (callback == null) {
+                throw new IllegalArgumentException("Enable callback cannot be null");
+            }
             this.whenEnable = chainConsumer(this.whenEnable, callback);
             return this;
         }
@@ -486,6 +496,9 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
          * @return this builder
          */
         public Builder<T> whenEnable(Runnable callback) {
+            if (callback == null) {
+                throw new IllegalArgumentException("Enable callback cannot be null");
+            }
             return whenEnable(s -> callback.run());
         }
 
@@ -497,6 +510,9 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
          * @return this builder
          */
         public Builder<T> whenDisable(final Consumer<SoftDependency<T>> callback) {
+            if (callback == null) {
+                throw new IllegalArgumentException("Disable callback cannot be null");
+            }
             this.whenDisable = chainConsumer(this.whenDisable, callback);
             return this;
         }
@@ -509,6 +525,9 @@ public abstract class SoftDependency<T> implements SoftDetectableDependency {
          * @return this builder
          */
         public Builder<T> whenDisable(Runnable callback) {
+            if (callback == null) {
+                throw new IllegalArgumentException("Disable callback cannot be null");
+            }
             return whenDisable(s -> callback.run());
         }
 
